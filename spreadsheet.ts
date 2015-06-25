@@ -7,10 +7,51 @@ import SplitPanel = phosphor.widgets.SplitPanel;
 import Size = phosphor.utility.Size;
 
 /*
+TODO
 -Should make preventDefault only happen if focused on the spreadsheet.
 -Make cells extend for longer text
--Fix copy/paste
+-Shift-arrow highlighting
 */
+
+/*known bugs
+-Internet Explorer mystery focus on click
+*/
+
+function is(type : string, obj : Object) {
+    var clas = Object.prototype.toString.call(obj).slice(8, -1);
+    return obj !== undefined && obj !== null && clas === type;
+}
+
+class Label extends Widget {
+	public _div: JQuery;
+	public isCol: boolean;
+	public num: number;
+	constructor(isCol: boolean, num: number) {
+		super();
+		this._div = $('<div/>').attr('contenteditable', 'false');
+		this.num = num;
+		this.isCol = isCol;
+
+		if (!isCol) {
+			this._div.text(num);
+		}
+		else {
+			while (num > 0) {
+				num -= 1;
+				this._div.text(String.fromCharCode(65 + (num % 26)) + this._div.text());
+				num = Math.floor(num / 26);
+			}
+		}
+		this._div.appendTo(this.node);
+		this._div.addClass('label');
+		this._div.data("label", this);
+
+		this.addClass('content');
+		this.verticalSizePolicy = SizePolicy.Fixed;
+		this.horizontalSizePolicy = SizePolicy.MinimumExpanding;
+	}
+}
+
 class Cell extends Widget {
 	public _cellx : number;
 	public _celly : number;
@@ -81,6 +122,10 @@ class SelectionManager {
 	private focusedCell: Cell;
 	private mouseDown: boolean; //for highlighting
 	private editing: boolean; //for navigation, if false, not editing a cell
+	public minX: number;
+	public maxX: number;
+	public minY: number;
+	public maxY: number;
 
 	constructor(sheet : Spreadsheet) {
 		this.sheet = sheet;
@@ -91,27 +136,31 @@ class SelectionManager {
 
 			/* ----------------- MOUSE DOWN ----------------------*/
 			sheet.node.addEventListener("mousedown", function (e : MouseEvent) {
-
-				if (e.target != undefined) {
+				if (is('HTMLDivElement', e.target)) {
 					var cell = <Cell>$(e.target).data("cell");
+					var label = <Label>$(e.target).data("label");
+
 					if (cell != undefined) {
 						manager.mouseDown = true;
-						cell.focus();
-					}
-				}
 
-				if (manager.focusedCell != undefined) {
-					if (cell == undefined || manager.focusedCell.equals(cell)) {
-					}
-					else {
-						manager.focusedCell._div.removeClass('focused');
-						manager.focusedCell = cell;
-					}
-				}
-				else {
-					manager.focusedCell = cell;
-				}
+						manager.removeFocus();
+						manager.clearSelections();
 
+						manager.focusCell(cell);
+						//manager.move(false, 0, 0);
+					}
+
+					if (label != undefined) {
+						manager.removeFocus();
+						manager.clearSelections();
+						if (label.isCol) {
+							manager.selectCol(label.num - 1);
+						}
+						else {
+							manager.selectRow(label.num - 1);
+						}
+					}
+				}
 			});
 
 			/* ----------------- MOUSE MOVE ----------------------*/
@@ -124,13 +173,13 @@ class SelectionManager {
 							document.getSelection().removeAllRanges();
 							//manager.focusedCell._div.focus();
 						}
-						var minX = Math.min(cell._cellx, manager.focusedCell._cellx);
-						var maxX = Math.max(cell._cellx, manager.focusedCell._cellx);
-						var minY = Math.min(cell._celly, manager.focusedCell._celly);
-						var maxY = Math.max(cell._celly, manager.focusedCell._celly);
+						manager.minX = Math.min(cell._cellx, manager.focusedCell._cellx);
+						manager.maxX = Math.max(cell._cellx, manager.focusedCell._cellx);
+						manager.minY = Math.min(cell._celly, manager.focusedCell._celly);
+						manager.maxY = Math.max(cell._celly, manager.focusedCell._celly);
 						manager.clearSelections();
-						for (var i = minX; i <= maxX; i++) {
-							for (var j = minY; j <= maxY; j++) {
+						for (var i = manager.minX; i <= manager.maxX; i++) {
+							for (var j = manager.minY; j <= manager.maxY; j++) {
 								manager.select(manager.getCell(i - 1, j - 1));
 							}
 						}
@@ -146,14 +195,14 @@ class SelectionManager {
 
 			/* -------------- DOUBLE CLICK ---------------------*/
 			sheet.node.addEventListener("dblclick", function (e : MouseEvent) {
-				manager.beginEdits();
+				if (e.target != undefined && $(e.target).data('cell') != undefined) {
+					manager.beginEdits();
+				}
 			});
 
 			/* --------------------KEY PRESS -----------------------*/
 
 			window.addEventListener("keydown", function (e : KeyboardEvent) {
-				console.log(e);
-				console.log(e.keyCode);
 
 				switch (e.keyCode) {
 					case 13: //enter
@@ -162,10 +211,10 @@ class SelectionManager {
 						}
 						else {
 							if (e.shiftKey) {
-								manager.moveUp(false);
+								manager.move(false, 0, -1);
 							}
 							else {
-								manager.moveDown(false);
+								manager.move(false, 0, 1);
 							}
 						}
 						break;
@@ -173,6 +222,7 @@ class SelectionManager {
 					case 46:
 						console.log("backspace pressed");
 						if (!manager.editing) {
+							e.preventDefault();
 							for (var i = 0; i < manager.selectedCells.length; i++) {
 								
 								manager.clearCell(manager.selectedCells[i]);
@@ -180,28 +230,37 @@ class SelectionManager {
 						}
 						break;
 					case 37: //left arrow
-						manager.moveLeft(false);
+						if (!e.shiftKey) {
+							manager.move(false, -1, 0);
+						}
 						break;
 					case 38: //up arrow
-						manager.moveUp(false);
+						if (!e.shiftKey) {
+							manager.move(false, 0, -1);
+						}
 						break;
 					case 39: //right arrow
-						manager.moveRight(false);
+						if (!e.shiftKey) {
+							manager.move(false, 1, 0);
+						}
 						break;
 					case 40: //down arrow
-						manager.moveDown(false);
+						if (!e.shiftKey) {
+							manager.move(false, 0, 1);
+						}
 						break;
 					case 9:
-						e.preventDefault();
+						e.preventDefault(); //check focus on this one...
 						if (e.shiftKey) {
-							manager.moveLeft(true);
+							manager.move(true, -1, 0);
 						}
 						else {
-							manager.moveRight(true);
+							manager.move(true, 1, 0);
 						}
 						break;
 					default:
-						if (!manager.editing) {
+						if (!manager.editing && e.keyCode >= 32 && e.keyCode != 127 && !e.altKey && !e.ctrlKey) {
+							console.log(e.keyCode);
 							if (manager.focusedCell != undefined) {
 								manager.clearCell(manager.focusedCell);
 								manager.beginEdits();
@@ -210,80 +269,130 @@ class SelectionManager {
 				}
 			});
 			/* --test--*/
-			sheet.node.addEventListener("copy", function(e : ClipboardEvent){
-				console.log("COPIED STUFF!")
+			window.addEventListener("copy", function(e : ClipboardEvent){
+				var str = "";
+				for (var i = manager.minY; i <= manager.maxY; i++) {
+					for (var j = manager.minX; j <= manager.maxX; j++) {
+						str = str + manager.getCell(j - 1, i - 1)._div.text();
+						if (j < manager.maxX) {
+							str = str + '\t';
+						}
+					}
+					if (i < manager.maxY) {
+						str = str + '\r\n';
+					}
+				}
+				e.clipboardData.setData('text/plain', str);
+				e.preventDefault();
+			});
+
+			window.addEventListener("paste", function(e: ClipboardEvent) {
+				console.log(e);
+				if (!manager.editing) {
+					manager.clearSelections();
+					var lines = e.clipboardData.getData("text/plain").split("\r\n");
+					var maxW = 0;
+					for (var i = 0; i < lines.length; i++) {
+						var cells = lines[i].split("\t");
+						if (cells.length > maxW) {
+							maxW = cells.length;
+						}
+					}
+					for (var i = 0; i < lines.length; i++) {
+						var cells = lines[i].split("\t");
+						for (var j = 0; j < maxW; j++) {
+							if (cells[j] != undefined) {
+								manager.setCell(manager.minX + j - 1, manager.minY + i - 1, cells[j]);
+							}
+							else {
+								manager.setCell(manager.minX + j - 1, manager.minY + i - 1, "");
+							}
+							manager.select(manager.getCell(manager.minX + j - 1, manager.minY + i - 1));
+						}
+					}
+					manager.maxX = manager.minX + maxW - 1;
+					manager.maxY = manager.minY + lines.length - 1;
+					manager.removeFocus();
+					manager.focusCell(manager.getCell(manager.minX - 1, manager.minY - 1));
+				}
 			});
 		})(this.sheet, this);
+
+		this.focusCell(this.getCell(0, 0));
 	}
+
+	removeFocus() {
+		if (this.focusedCell != undefined) {
+			console.log(this.focusedCell);
+			this.focusedCell._div.removeClass('focused');
+		}
+	}
+
+	focusCell(cell : Cell) {
+		this.minX = cell._cellx;
+		this.maxX = cell._cellx;
+		this.minY = cell._celly;
+		this.maxY = cell._celly;
+
+		cell.focus();
+		this.focusedCell = cell;
+		this.select(cell);
+	}
+
+	selectRow(rowNum: number) {
+		for (var i = 0; i < this.sheet.cells.length; i++) {
+			this.select(this.sheet.cells[i][rowNum]);
+		}
+		this.sheet.cells[0][rowNum].focus();
+		this.focusedCell = this.sheet.cells[0][rowNum];
+		this.minX = 1;
+		this.maxX = this.sheet.cells.length;
+		this.minY = rowNum;
+		this.maxY = rowNum;
+	}
+
+	selectCol(colNum: number) {
+		if (colNum >= 0) {
+			for (var i = 0; i < this.sheet.cells[0].length; i++) {
+				this.select(this.sheet.cells[colNum][i]);
+			}
+			this.sheet.cells[colNum][0].focus();
+			this.focusedCell = this.sheet.cells[colNum][0];
+			this.minY = 1;
+			this.maxY = this.sheet.cells[0].length;
+			this.minX = colNum;
+			this.maxX = colNum;
+		}
+	}
+
 
 	clearCell (cell : Cell) {
 		cell._sheet.cellVals[cell._cellx - 1][cell._celly - 1] = "";
 		cell.updateView();
 	}
 
-	moveLeft (skipCheck : boolean) {
-		this.getCell(-1, 0);
-		if ((this.focusedCell._cellx > 1 && !this.editing) || skipCheck) {
-			this.clearSelections();
-			if (this.focusedCell != undefined) {
+	move(skipCheck : boolean, xAmount : number, yAmount : number) {
+		if (this.focusedCell != undefined && 
+			this.focusedCell._cellx + xAmount > 0 && this.focusedCell._cellx + xAmount <= this.sheet.cells.length && 
+			this.focusedCell._celly + yAmount > 0 && this.focusedCell._celly + yAmount <= this.sheet.cells[0].length) {
+			if (!this.editing || skipCheck) {
+				this.clearSelections();
 				this.focusedCell.pushBack();
 				this.focusedCell._div.removeClass('focused');
-				var cell = this.getCell(this.focusedCell._cellx - 2, this.focusedCell._celly - 1);
-				cell.focus();
-				this.select(cell);
-				this.focusedCell = cell;
+
+				var cell = this.getCell(this.focusedCell._cellx - 1 + xAmount, this.focusedCell._celly - 1 + yAmount);
+				this.focusCell(cell);
 			}
 		}
 	}
 
-	moveRight (skipCheck : boolean) {
-		if ((this.focusedCell._cellx < this.sheet.cells.length && !this.editing) || skipCheck) {
-			this.clearSelections();
-			if (this.focusedCell != undefined) {
-				this.focusedCell.pushBack();
-				this.focusedCell._div.removeClass('focused');
-				var cell = this.getCell(this.focusedCell._cellx, this.focusedCell._celly - 1);
-
-				cell.focus();
-				this.select(cell);
-				this.focusedCell = cell;
-			}
-		}
-	}
-
-	moveUp (skipCheck : boolean) {
-		if ((this.focusedCell._celly > 1 && !this.editing) || skipCheck) {
-			this.clearSelections();
-			if (this.focusedCell != undefined) {
-				this.focusedCell.pushBack();
-				this.focusedCell._div.removeClass('focused');
-				var cell = this.getCell(this.focusedCell._cellx - 1, this.focusedCell._celly - 2);
-
-				cell.focus();
-				this.select(cell);
-				this.focusedCell = cell;
-			}
-		}
-	}
-
-	moveDown (skipCheck : boolean) {
-
-		if ((this.focusedCell._celly < this.sheet.cells[0].length && !this.editing) || skipCheck) {
-			this.clearSelections();
-			if (this.focusedCell != undefined) {
-				this.focusedCell.pushBack();
-				this.focusedCell._div.removeClass('focused');
-				var cell = this.getCell(this.focusedCell._cellx - 1, this.focusedCell._celly);
-
-				cell.focus();
-				this.select(cell);
-				this.focusedCell = cell;
-			}
-		}
-	}
 
 	getCell(x : number, y : number) {
 		return this.sheet.cells[x][y];
+	}
+	setCell(x : number, y : number, newVal : string) {
+		this.sheet.cellVals[x][y] = newVal;
+		this.getCell(x, y).updateView();
 	}
 
 	select(cell : Cell) {
@@ -323,11 +432,18 @@ class Spreadsheet extends SplitPanel {
 		this.handleSize = 1;
 		this.cells = new Array();
 		this.cellVals = new Array();
+		var colPanel = new SplitPanel(Orientation.Vertical);
+		colPanel.addWidget(new Label(true, -1));
+		for (var i = 1; i <= height; i++) {
+			colPanel.addWidget(new Label(false, i));
+		}
+		this.addWidget(colPanel);
 
 		for (var i = 1; i <= width; i++) {
 			var panel = new SplitPanel(Orientation.Vertical);
 			this.cells.push(new Array());
 			this.cellVals.push(new Array());
+			panel.addWidget(new Label(true, i));
 
 			for (var j = 1; j <= height; j++) {
 				this.cellVals[i - 1].push("" + i + " " + j);
@@ -351,7 +467,7 @@ class Spreadsheet extends SplitPanel {
 
 
 function main() {
-	setup(15, 5);
+	setup(15, 53);
 }
 
 function setup(width : number, height : number) {

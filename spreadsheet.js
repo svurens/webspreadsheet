@@ -12,10 +12,44 @@ var Widget = phosphor.widgets.Widget;
 var SplitPanel = phosphor.widgets.SplitPanel;
 var Size = phosphor.utility.Size;
 /*
+TODO
 -Should make preventDefault only happen if focused on the spreadsheet.
 -Make cells extend for longer text
--Fix copy/paste
+-Shift-arrow highlighting
 */
+/*known bugs
+-Internet Explorer mystery focus on click
+*/
+function is(type, obj) {
+    var clas = Object.prototype.toString.call(obj).slice(8, -1);
+    return obj !== undefined && obj !== null && clas === type;
+}
+var Label = (function (_super) {
+    __extends(Label, _super);
+    function Label(isCol, num) {
+        _super.call(this);
+        this._div = $('<div/>').attr('contenteditable', 'false');
+        this.num = num;
+        this.isCol = isCol;
+        if (!isCol) {
+            this._div.text(num);
+        }
+        else {
+            while (num > 0) {
+                num -= 1;
+                this._div.text(String.fromCharCode(65 + (num % 26)) + this._div.text());
+                num = Math.floor(num / 26);
+            }
+        }
+        this._div.appendTo(this.node);
+        this._div.addClass('label');
+        this._div.data("label", this);
+        this.addClass('content');
+        this.verticalSizePolicy = 0 /* Fixed */;
+        this.horizontalSizePolicy = SizePolicy.MinimumExpanding;
+    }
+    return Label;
+})(Widget);
 var Cell = (function (_super) {
     __extends(Cell, _super);
     function Cell(parent, x, y) {
@@ -72,23 +106,25 @@ var SelectionManager = (function () {
         (function (sheet, manager) {
             /* ----------------- MOUSE DOWN ----------------------*/
             sheet.node.addEventListener("mousedown", function (e) {
-                if (e.target != undefined) {
+                if (is('HTMLDivElement', e.target)) {
                     var cell = $(e.target).data("cell");
+                    var label = $(e.target).data("label");
                     if (cell != undefined) {
                         manager.mouseDown = true;
-                        cell.focus();
+                        manager.removeFocus();
+                        manager.clearSelections();
+                        manager.focusCell(cell);
                     }
-                }
-                if (manager.focusedCell != undefined) {
-                    if (cell == undefined || manager.focusedCell.equals(cell)) {
+                    if (label != undefined) {
+                        manager.removeFocus();
+                        manager.clearSelections();
+                        if (label.isCol) {
+                            manager.selectCol(label.num - 1);
+                        }
+                        else {
+                            manager.selectRow(label.num - 1);
+                        }
                     }
-                    else {
-                        manager.focusedCell._div.removeClass('focused');
-                        manager.focusedCell = cell;
-                    }
-                }
-                else {
-                    manager.focusedCell = cell;
                 }
             });
             /* ----------------- MOUSE MOVE ----------------------*/
@@ -99,13 +135,13 @@ var SelectionManager = (function () {
                         if (cell._cellx != manager.focusedCell._cellx || cell._celly != manager.focusedCell._celly) {
                             document.getSelection().removeAllRanges();
                         }
-                        var minX = Math.min(cell._cellx, manager.focusedCell._cellx);
-                        var maxX = Math.max(cell._cellx, manager.focusedCell._cellx);
-                        var minY = Math.min(cell._celly, manager.focusedCell._celly);
-                        var maxY = Math.max(cell._celly, manager.focusedCell._celly);
+                        manager.minX = Math.min(cell._cellx, manager.focusedCell._cellx);
+                        manager.maxX = Math.max(cell._cellx, manager.focusedCell._cellx);
+                        manager.minY = Math.min(cell._celly, manager.focusedCell._celly);
+                        manager.maxY = Math.max(cell._celly, manager.focusedCell._celly);
                         manager.clearSelections();
-                        for (var i = minX; i <= maxX; i++) {
-                            for (var j = minY; j <= maxY; j++) {
+                        for (var i = manager.minX; i <= manager.maxX; i++) {
+                            for (var j = manager.minY; j <= manager.maxY; j++) {
                                 manager.select(manager.getCell(i - 1, j - 1));
                             }
                         }
@@ -119,12 +155,12 @@ var SelectionManager = (function () {
             });
             /* -------------- DOUBLE CLICK ---------------------*/
             sheet.node.addEventListener("dblclick", function (e) {
-                manager.beginEdits();
+                if (e.target != undefined && $(e.target).data('cell') != undefined) {
+                    manager.beginEdits();
+                }
             });
             /* --------------------KEY PRESS -----------------------*/
             window.addEventListener("keydown", function (e) {
-                console.log(e);
-                console.log(e.keyCode);
                 switch (e.keyCode) {
                     case 13:
                         if (manager.editing) {
@@ -132,10 +168,10 @@ var SelectionManager = (function () {
                         }
                         else {
                             if (e.shiftKey) {
-                                manager.moveUp(false);
+                                manager.move(false, 0, -1);
                             }
                             else {
-                                manager.moveDown(false);
+                                manager.move(false, 0, 1);
                             }
                         }
                         break;
@@ -143,34 +179,44 @@ var SelectionManager = (function () {
                     case 46:
                         console.log("backspace pressed");
                         if (!manager.editing) {
+                            e.preventDefault();
                             for (var i = 0; i < manager.selectedCells.length; i++) {
                                 manager.clearCell(manager.selectedCells[i]);
                             }
                         }
                         break;
                     case 37:
-                        manager.moveLeft(false);
+                        if (!e.shiftKey) {
+                            manager.move(false, -1, 0);
+                        }
                         break;
                     case 38:
-                        manager.moveUp(false);
+                        if (!e.shiftKey) {
+                            manager.move(false, 0, -1);
+                        }
                         break;
                     case 39:
-                        manager.moveRight(false);
+                        if (!e.shiftKey) {
+                            manager.move(false, 1, 0);
+                        }
                         break;
                     case 40:
-                        manager.moveDown(false);
+                        if (!e.shiftKey) {
+                            manager.move(false, 0, 1);
+                        }
                         break;
                     case 9:
-                        e.preventDefault();
+                        e.preventDefault(); //check focus on this one...
                         if (e.shiftKey) {
-                            manager.moveLeft(true);
+                            manager.move(true, -1, 0);
                         }
                         else {
-                            manager.moveRight(true);
+                            manager.move(true, 1, 0);
                         }
                         break;
                     default:
-                        if (!manager.editing) {
+                        if (!manager.editing && e.keyCode >= 32 && e.keyCode != 127 && !e.altKey && !e.ctrlKey) {
+                            console.log(e.keyCode);
                             if (manager.focusedCell != undefined) {
                                 manager.clearCell(manager.focusedCell);
                                 manager.beginEdits();
@@ -179,70 +225,115 @@ var SelectionManager = (function () {
                 }
             });
             /* --test--*/
-            sheet.node.addEventListener("copy", function (e) {
-                console.log("COPIED STUFF!");
+            window.addEventListener("copy", function (e) {
+                var str = "";
+                for (var i = manager.minY; i <= manager.maxY; i++) {
+                    for (var j = manager.minX; j <= manager.maxX; j++) {
+                        str = str + manager.getCell(j - 1, i - 1)._div.text();
+                        if (j < manager.maxX) {
+                            str = str + '\t';
+                        }
+                    }
+                    if (i < manager.maxY) {
+                        str = str + '\r\n';
+                    }
+                }
+                e.clipboardData.setData('text/plain', str);
+                e.preventDefault();
+            });
+            window.addEventListener("paste", function (e) {
+                console.log(e);
+                if (!manager.editing) {
+                    manager.clearSelections();
+                    var lines = e.clipboardData.getData("text/plain").split("\r\n");
+                    var maxW = 0;
+                    for (var i = 0; i < lines.length; i++) {
+                        var cells = lines[i].split("\t");
+                        if (cells.length > maxW) {
+                            maxW = cells.length;
+                        }
+                    }
+                    for (var i = 0; i < lines.length; i++) {
+                        var cells = lines[i].split("\t");
+                        for (var j = 0; j < maxW; j++) {
+                            if (cells[j] != undefined) {
+                                manager.setCell(manager.minX + j - 1, manager.minY + i - 1, cells[j]);
+                            }
+                            else {
+                                manager.setCell(manager.minX + j - 1, manager.minY + i - 1, "");
+                            }
+                            manager.select(manager.getCell(manager.minX + j - 1, manager.minY + i - 1));
+                        }
+                    }
+                    manager.maxX = manager.minX + maxW - 1;
+                    manager.maxY = manager.minY + lines.length - 1;
+                    manager.removeFocus();
+                    manager.focusCell(manager.getCell(manager.minX - 1, manager.minY - 1));
+                }
             });
         })(this.sheet, this);
+        this.focusCell(this.getCell(0, 0));
     }
+    SelectionManager.prototype.removeFocus = function () {
+        if (this.focusedCell != undefined) {
+            console.log(this.focusedCell);
+            this.focusedCell._div.removeClass('focused');
+        }
+    };
+    SelectionManager.prototype.focusCell = function (cell) {
+        this.minX = cell._cellx;
+        this.maxX = cell._cellx;
+        this.minY = cell._celly;
+        this.maxY = cell._celly;
+        cell.focus();
+        this.focusedCell = cell;
+        this.select(cell);
+    };
+    SelectionManager.prototype.selectRow = function (rowNum) {
+        for (var i = 0; i < this.sheet.cells.length; i++) {
+            this.select(this.sheet.cells[i][rowNum]);
+        }
+        this.sheet.cells[0][rowNum].focus();
+        this.focusedCell = this.sheet.cells[0][rowNum];
+        this.minX = 1;
+        this.maxX = this.sheet.cells.length;
+        this.minY = rowNum;
+        this.maxY = rowNum;
+    };
+    SelectionManager.prototype.selectCol = function (colNum) {
+        if (colNum >= 0) {
+            for (var i = 0; i < this.sheet.cells[0].length; i++) {
+                this.select(this.sheet.cells[colNum][i]);
+            }
+            this.sheet.cells[colNum][0].focus();
+            this.focusedCell = this.sheet.cells[colNum][0];
+            this.minY = 1;
+            this.maxY = this.sheet.cells[0].length;
+            this.minX = colNum;
+            this.maxX = colNum;
+        }
+    };
     SelectionManager.prototype.clearCell = function (cell) {
         cell._sheet.cellVals[cell._cellx - 1][cell._celly - 1] = "";
         cell.updateView();
     };
-    SelectionManager.prototype.moveLeft = function (skipCheck) {
-        this.getCell(-1, 0);
-        if ((this.focusedCell._cellx > 1 && !this.editing) || skipCheck) {
-            this.clearSelections();
-            if (this.focusedCell != undefined) {
+    SelectionManager.prototype.move = function (skipCheck, xAmount, yAmount) {
+        if (this.focusedCell != undefined && this.focusedCell._cellx + xAmount > 0 && this.focusedCell._cellx + xAmount <= this.sheet.cells.length && this.focusedCell._celly + yAmount > 0 && this.focusedCell._celly + yAmount <= this.sheet.cells[0].length) {
+            if (!this.editing || skipCheck) {
+                this.clearSelections();
                 this.focusedCell.pushBack();
                 this.focusedCell._div.removeClass('focused');
-                var cell = this.getCell(this.focusedCell._cellx - 2, this.focusedCell._celly - 1);
-                cell.focus();
-                this.select(cell);
-                this.focusedCell = cell;
-            }
-        }
-    };
-    SelectionManager.prototype.moveRight = function (skipCheck) {
-        if ((this.focusedCell._cellx < this.sheet.cells.length && !this.editing) || skipCheck) {
-            this.clearSelections();
-            if (this.focusedCell != undefined) {
-                this.focusedCell.pushBack();
-                this.focusedCell._div.removeClass('focused');
-                var cell = this.getCell(this.focusedCell._cellx, this.focusedCell._celly - 1);
-                cell.focus();
-                this.select(cell);
-                this.focusedCell = cell;
-            }
-        }
-    };
-    SelectionManager.prototype.moveUp = function (skipCheck) {
-        if ((this.focusedCell._celly > 1 && !this.editing) || skipCheck) {
-            this.clearSelections();
-            if (this.focusedCell != undefined) {
-                this.focusedCell.pushBack();
-                this.focusedCell._div.removeClass('focused');
-                var cell = this.getCell(this.focusedCell._cellx - 1, this.focusedCell._celly - 2);
-                cell.focus();
-                this.select(cell);
-                this.focusedCell = cell;
-            }
-        }
-    };
-    SelectionManager.prototype.moveDown = function (skipCheck) {
-        if ((this.focusedCell._celly < this.sheet.cells[0].length && !this.editing) || skipCheck) {
-            this.clearSelections();
-            if (this.focusedCell != undefined) {
-                this.focusedCell.pushBack();
-                this.focusedCell._div.removeClass('focused');
-                var cell = this.getCell(this.focusedCell._cellx - 1, this.focusedCell._celly);
-                cell.focus();
-                this.select(cell);
-                this.focusedCell = cell;
+                var cell = this.getCell(this.focusedCell._cellx - 1 + xAmount, this.focusedCell._celly - 1 + yAmount);
+                this.focusCell(cell);
             }
         }
     };
     SelectionManager.prototype.getCell = function (x, y) {
         return this.sheet.cells[x][y];
+    };
+    SelectionManager.prototype.setCell = function (x, y, newVal) {
+        this.sheet.cellVals[x][y] = newVal;
+        this.getCell(x, y).updateView();
     };
     SelectionManager.prototype.select = function (cell) {
         this.selectedCells.push(cell);
@@ -274,10 +365,17 @@ var Spreadsheet = (function (_super) {
         this.handleSize = 1;
         this.cells = new Array();
         this.cellVals = new Array();
+        var colPanel = new SplitPanel(1 /* Vertical */);
+        colPanel.addWidget(new Label(true, -1));
+        for (var i = 1; i <= height; i++) {
+            colPanel.addWidget(new Label(false, i));
+        }
+        this.addWidget(colPanel);
         for (var i = 1; i <= width; i++) {
             var panel = new SplitPanel(1 /* Vertical */);
             this.cells.push(new Array());
             this.cellVals.push(new Array());
+            panel.addWidget(new Label(true, i));
             for (var j = 1; j <= height; j++) {
                 this.cellVals[i - 1].push("" + i + " " + j);
                 var cell = new Cell(this, i, j);
@@ -295,7 +393,7 @@ var Spreadsheet = (function (_super) {
     return Spreadsheet;
 })(SplitPanel);
 function main() {
-    setup(15, 5);
+    setup(15, 53);
 }
 function setup(width, height) {
     var spreadsheet = new Spreadsheet(width, height);
