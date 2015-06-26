@@ -11,14 +11,24 @@ var SizePolicy = phosphor.widgets.SizePolicy;
 var Widget = phosphor.widgets.Widget;
 var SplitPanel = phosphor.widgets.SplitPanel;
 var Size = phosphor.utility.Size;
+var Menu = phosphor.widgets.Menu;
+var MenuBar = phosphor.widgets.MenuBar;
+var MenuItem = phosphor.widgets.MenuItem;
+var connect = phosphor.core.connect;
 /*
 TODO
 -Should make preventDefault only happen if focused on the spreadsheet.
+-Shift select rows/cols
+-Select all upon the top left corner?
 -Make cells extend for longer text
--Shift-arrow highlighting
+-Improve undefined checks
+-Sort by...
+-Add/Remove rows/cols
+-Undo/Redo
 */
 /*known bugs
 -Internet Explorer mystery focus on click
+-Some stuff doesnt work on internet explorer because it is an amazing program
 */
 function is(type, obj) {
     var clas = Object.prototype.toString.call(obj).slice(8, -1);
@@ -31,16 +41,7 @@ var Label = (function (_super) {
         this._div = $('<div/>').attr('contenteditable', 'false');
         this.num = num;
         this.isCol = isCol;
-        if (!isCol) {
-            this._div.text(num);
-        }
-        else {
-            while (num > 0) {
-                num -= 1;
-                this._div.text(String.fromCharCode(65 + (num % 26)) + this._div.text());
-                num = Math.floor(num / 26);
-            }
-        }
+        this.updateText();
         this._div.appendTo(this.node);
         this._div.addClass('label');
         this._div.data("label", this);
@@ -48,6 +49,44 @@ var Label = (function (_super) {
         this.verticalSizePolicy = 0 /* Fixed */;
         this.horizontalSizePolicy = SizePolicy.MinimumExpanding;
     }
+    Label.prototype.rowInserted = function () {
+        if (!this.isCol) {
+            this.num++;
+            this.updateText();
+        }
+    };
+    Label.prototype.colInserted = function () {
+        if (this.isCol) {
+            this.num++;
+            this.updateText();
+        }
+    };
+    Label.prototype.rowDeleted = function () {
+        if (!this.isCol) {
+            this.num--;
+            this.updateText();
+        }
+    };
+    Label.prototype.colDeleted = function () {
+        if (this.isCol) {
+            this.num--;
+            this.updateText();
+        }
+    };
+    Label.prototype.updateText = function () {
+        var num = this.num;
+        this._div.text("");
+        if (!this.isCol) {
+            this._div.text(num);
+        }
+        else {
+            while (num > 0) {
+                num--;
+                this._div.text(String.fromCharCode(65 + (num % 26)) + this._div.text());
+                num = Math.floor(num / 26);
+            }
+        }
+    };
     return Label;
 })(Widget);
 var Cell = (function (_super) {
@@ -109,13 +148,18 @@ var SelectionManager = (function () {
                 if (is('HTMLDivElement', e.target)) {
                     var cell = $(e.target).data("cell");
                     var label = $(e.target).data("label");
-                    if (cell != undefined) {
+                    if (typeof cell !== 'undefined') {
                         manager.mouseDown = true;
-                        manager.removeFocus();
-                        manager.clearSelections();
-                        manager.focusCell(cell);
+                        if (!e.shiftKey) {
+                            manager.removeFocus();
+                            manager.clearSelections();
+                            manager.focusCell(cell);
+                        }
+                        else {
+                            manager.mouseSelectRange(cell);
+                        }
                     }
-                    if (label != undefined) {
+                    if (typeof label !== 'undefined') {
                         manager.removeFocus();
                         manager.clearSelections();
                         if (label.isCol) {
@@ -129,22 +173,10 @@ var SelectionManager = (function () {
             });
             /* ----------------- MOUSE MOVE ----------------------*/
             sheet.node.addEventListener("mousemove", function (e) {
-                if (e.target != undefined && manager.focusedCell != undefined) {
+                if (typeof e.target !== 'undefined' && typeof manager.focusedCell != 'undefined') {
                     var cell = $(e.target).data("cell");
-                    if (manager.mouseDown && cell != undefined && !manager.editing) {
-                        if (cell._cellx != manager.focusedCell._cellx || cell._celly != manager.focusedCell._celly) {
-                            document.getSelection().removeAllRanges();
-                        }
-                        manager.minX = Math.min(cell._cellx, manager.focusedCell._cellx);
-                        manager.maxX = Math.max(cell._cellx, manager.focusedCell._cellx);
-                        manager.minY = Math.min(cell._celly, manager.focusedCell._celly);
-                        manager.maxY = Math.max(cell._celly, manager.focusedCell._celly);
-                        manager.clearSelections();
-                        for (var i = manager.minX; i <= manager.maxX; i++) {
-                            for (var j = manager.minY; j <= manager.maxY; j++) {
-                                manager.select(manager.getCell(i - 1, j - 1));
-                            }
-                        }
+                    if (manager.mouseDown && typeof cell !== 'undefined' && !manager.editing) {
+                        manager.mouseSelectRange(cell);
                     }
                 }
             });
@@ -155,7 +187,7 @@ var SelectionManager = (function () {
             });
             /* -------------- DOUBLE CLICK ---------------------*/
             sheet.node.addEventListener("dblclick", function (e) {
-                if (e.target != undefined && $(e.target).data('cell') != undefined) {
+                if (typeof e.target !== 'undefined' && typeof $(e.target).data('cell') !== 'undefined') {
                     manager.beginEdits();
                 }
             });
@@ -163,16 +195,14 @@ var SelectionManager = (function () {
             window.addEventListener("keydown", function (e) {
                 switch (e.keyCode) {
                     case 13:
-                        if (manager.editing) {
-                            e.preventDefault();
+                        if (e.shiftKey) {
+                            manager.move(true, 0, -1);
                         }
                         else {
-                            if (e.shiftKey) {
-                                manager.move(false, 0, -1);
-                            }
-                            else {
-                                manager.move(false, 0, 1);
-                            }
+                            manager.move(true, 0, 1);
+                        }
+                        if (manager.editing) {
+                            e.preventDefault();
                         }
                         break;
                     case 8:
@@ -189,20 +219,68 @@ var SelectionManager = (function () {
                         if (!e.shiftKey) {
                             manager.move(false, -1, 0);
                         }
+                        else {
+                            if (manager.maxX > manager.focusedCell._cellx) {
+                                manager.maxX--;
+                                manager.selectArea();
+                            }
+                            else {
+                                if (manager.minX > 1) {
+                                    manager.minX--;
+                                    manager.selectArea();
+                                }
+                            }
+                        }
                         break;
                     case 38:
                         if (!e.shiftKey) {
                             manager.move(false, 0, -1);
+                        }
+                        else {
+                            if (manager.maxY > manager.focusedCell._celly) {
+                                manager.maxY--;
+                                manager.selectArea();
+                            }
+                            else {
+                                if (manager.minY > 1) {
+                                    manager.minY--;
+                                    manager.selectArea();
+                                }
+                            }
                         }
                         break;
                     case 39:
                         if (!e.shiftKey) {
                             manager.move(false, 1, 0);
                         }
+                        else {
+                            if (manager.minX < manager.focusedCell._cellx) {
+                                manager.minX++;
+                                manager.selectArea();
+                            }
+                            else {
+                                if (manager.maxX < sheet.cells.length) {
+                                    manager.maxX++;
+                                    manager.selectArea();
+                                }
+                            }
+                        }
                         break;
                     case 40:
                         if (!e.shiftKey) {
                             manager.move(false, 0, 1);
+                        }
+                        else {
+                            if (manager.minY < manager.focusedCell._celly) {
+                                manager.minY++;
+                                manager.selectArea();
+                            }
+                            else {
+                                if (manager.maxY < sheet.cells[0].length) {
+                                    manager.maxY++;
+                                    manager.selectArea();
+                                }
+                            }
                         }
                         break;
                     case 9:
@@ -217,7 +295,7 @@ var SelectionManager = (function () {
                     default:
                         if (!manager.editing && e.keyCode >= 32 && e.keyCode != 127 && !e.altKey && !e.ctrlKey) {
                             console.log(e.keyCode);
-                            if (manager.focusedCell != undefined) {
+                            if (typeof manager.focusedCell !== 'undefined') {
                                 manager.clearCell(manager.focusedCell);
                                 manager.beginEdits();
                             }
@@ -242,7 +320,6 @@ var SelectionManager = (function () {
                 e.preventDefault();
             });
             window.addEventListener("paste", function (e) {
-                console.log(e);
                 if (!manager.editing) {
                     manager.clearSelections();
                     var lines = e.clipboardData.getData("text/plain").split("\r\n");
@@ -256,13 +333,15 @@ var SelectionManager = (function () {
                     for (var i = 0; i < lines.length; i++) {
                         var cells = lines[i].split("\t");
                         for (var j = 0; j < maxW; j++) {
-                            if (cells[j] != undefined) {
-                                manager.setCell(manager.minX + j - 1, manager.minY + i - 1, cells[j]);
+                            if (manager.minX + j <= sheet.cells.length && manager.minY + i <= sheet.cells[0].length) {
+                                if (typeof cells[j] !== 'undefined') {
+                                    manager.setCell(manager.minX + j - 1, manager.minY + i - 1, cells[j]);
+                                }
+                                else {
+                                    manager.setCell(manager.minX + j - 1, manager.minY + i - 1, "");
+                                }
+                                manager.select(manager.getCell(manager.minX + j - 1, manager.minY + i - 1));
                             }
-                            else {
-                                manager.setCell(manager.minX + j - 1, manager.minY + i - 1, "");
-                            }
-                            manager.select(manager.getCell(manager.minX + j - 1, manager.minY + i - 1));
                         }
                     }
                     manager.maxX = manager.minX + maxW - 1;
@@ -273,10 +352,117 @@ var SelectionManager = (function () {
             });
         })(this.sheet, this);
         this.focusCell(this.getCell(0, 0));
+        this.createMenu();
     }
+    SelectionManager.prototype.insertRow = function (rowNum) {
+        for (var i = 0; i < this.sheet.labels.length; i++) {
+            if (this.sheet.labels[i].num >= rowNum) {
+                this.sheet.labels[i].rowInserted();
+            }
+        }
+        var label = new Label(false, rowNum);
+        this.sheet.columns[0].insertWidget(rowNum, label);
+        this.sheet.labels.push(label);
+        for (var i = 1; i < this.sheet.columns.length; i++) {
+            this.sheet.cellVals[i - 1].splice(rowNum - 1, 0, "");
+            var cell = new Cell(this.sheet, i, rowNum);
+            this.sheet.cells[i - 1].splice(rowNum - 1, 0, cell);
+            this.sheet.columns[i].insertWidget(rowNum, cell);
+            for (var j = rowNum; j < this.sheet.cells[i - 1].length; j++) {
+                this.sheet.cells[i - 1][j]._celly++;
+            }
+            console.log(this.sheet.cellVals[i - 1].length);
+        }
+        this.clearSelections();
+        this.selectRow(rowNum - 1);
+    };
+    SelectionManager.prototype.insertCol = function (colNum) {
+        for (var i = 0; i < this.sheet.labels.length; i++) {
+            if (this.sheet.labels[i].num >= colNum) {
+                this.sheet.labels[i].colInserted();
+            }
+        }
+        var panel = new SplitPanel(1 /* Vertical */);
+        this.sheet.insertWidget(colNum, panel);
+        var label = new Label(true, colNum);
+        panel.addWidget(label);
+        this.sheet.labels.push(label);
+        this.sheet.columns.splice(colNum, 0, panel);
+        console.log(this.sheet.cells);
+        for (var i = colNum - 1; i < this.sheet.cells.length; i++) {
+            for (var j = 0; j < this.sheet.cells[0].length; j++) {
+                this.sheet.cells[i][j]._cellx++;
+            }
+        }
+        var len = this.sheet.cells[0].length;
+        this.sheet.cells.splice(colNum - 1, 0, new Array());
+        this.sheet.cellVals.splice(colNum - 1, 0, new Array());
+        for (var i = 0; i < len; i++) {
+            var cell = new Cell(this.sheet, colNum, i + 1);
+            cell.width = this.focusedCell.width;
+            panel.addWidget(cell);
+            this.sheet.cellVals[colNum - 1].push("");
+            this.sheet.cells[colNum - 1].push(cell);
+        }
+        this.clearSelections();
+        this.selectCol(colNum - 1);
+    };
+    SelectionManager.prototype.createMenu = function () {
+        (function (manager) {
+            var handler = {
+                rowBefore: function () {
+                    console.log("Add row before");
+                    manager.insertRow(manager.focusedCell._celly);
+                },
+                rowAfter: function () {
+                    console.log("Add row after");
+                    manager.insertRow(manager.focusedCell._celly + 1);
+                },
+                colBefore: function () {
+                    console.log("Add col before");
+                    manager.insertCol(manager.focusedCell._cellx);
+                },
+                colAfter: function () {
+                    console.log("Add col after");
+                    manager.insertCol(manager.focusedCell._cellx + 1);
+                },
+            };
+            var rowBeforeItem = new MenuItem({
+                text: "Insert Row Before",
+                className: 'rowBefore'
+            });
+            var rowAfterItem = new MenuItem({
+                text: "Insert Row After",
+                className: 'rowAfter'
+            });
+            var colBeforeItem = new MenuItem({
+                text: "Insert Column Before",
+                className: 'colBefore'
+            });
+            var colAfterItem = new MenuItem({
+                text: "Insert Column After",
+                className: 'colAfter'
+            });
+            connect(rowBeforeItem, MenuItem.triggered, handler, handler.rowBefore);
+            connect(rowAfterItem, MenuItem.triggered, handler, handler.rowAfter);
+            connect(colBeforeItem, MenuItem.triggered, handler, handler.colBefore);
+            connect(colAfterItem, MenuItem.triggered, handler, handler.colAfter);
+            var rightClickMenu = new Menu([
+                rowBeforeItem,
+                rowAfterItem,
+                colBeforeItem,
+                colAfterItem
+            ]);
+            document.addEventListener('contextmenu', function (event) {
+                event.preventDefault();
+                var x = event.clientX;
+                var y = event.clientY;
+                rightClickMenu.popup(x, y);
+            });
+        })(this);
+    };
     SelectionManager.prototype.removeFocus = function () {
-        if (this.focusedCell != undefined) {
-            console.log(this.focusedCell);
+        if (typeof this.focusedCell !== 'undefined') {
             this.focusedCell._div.removeClass('focused');
         }
     };
@@ -288,6 +474,24 @@ var SelectionManager = (function () {
         cell.focus();
         this.focusedCell = cell;
         this.select(cell);
+    };
+    SelectionManager.prototype.mouseSelectRange = function (target) {
+        if (target._cellx != this.focusedCell._cellx || target._celly != this.focusedCell._celly) {
+            document.getSelection().removeAllRanges();
+        }
+        this.minX = Math.min(target._cellx, this.focusedCell._cellx);
+        this.maxX = Math.max(target._cellx, this.focusedCell._cellx);
+        this.minY = Math.min(target._celly, this.focusedCell._celly);
+        this.maxY = Math.max(target._celly, this.focusedCell._celly);
+        this.selectArea();
+    };
+    SelectionManager.prototype.selectArea = function () {
+        this.clearSelections();
+        for (var i = this.minX; i <= this.maxX; i++) {
+            for (var j = this.minY; j <= this.maxY; j++) {
+                this.select(this.getCell(i - 1, j - 1));
+            }
+        }
     };
     SelectionManager.prototype.selectRow = function (rowNum) {
         for (var i = 0; i < this.sheet.cells.length; i++) {
@@ -318,7 +522,7 @@ var SelectionManager = (function () {
         cell.updateView();
     };
     SelectionManager.prototype.move = function (skipCheck, xAmount, yAmount) {
-        if (this.focusedCell != undefined && this.focusedCell._cellx + xAmount > 0 && this.focusedCell._cellx + xAmount <= this.sheet.cells.length && this.focusedCell._celly + yAmount > 0 && this.focusedCell._celly + yAmount <= this.sheet.cells[0].length) {
+        if (typeof this.focusedCell !== 'undefined' && this.focusedCell._cellx + xAmount > 0 && this.focusedCell._cellx + xAmount <= this.sheet.cells.length && this.focusedCell._celly + yAmount > 0 && this.focusedCell._celly + yAmount <= this.sheet.cells[0].length) {
             if (!this.editing || skipCheck) {
                 this.clearSelections();
                 this.focusedCell.pushBack();
@@ -346,7 +550,7 @@ var SelectionManager = (function () {
         this.selectedCells = new Array();
     };
     SelectionManager.prototype.beginEdits = function () {
-        if (this.focusedCell != undefined) {
+        if (typeof this.focusedCell !== 'undefined') {
             this.focusedCell.editable();
             this.focusedCell._div.focus();
             this.editing = true;
@@ -362,27 +566,37 @@ var Spreadsheet = (function (_super) {
     __extends(Spreadsheet, _super);
     function Spreadsheet(width, height) {
         _super.call(this, 0 /* Horizontal */);
+        this.columns = new Array();
+        this.labels = new Array();
         this.handleSize = 1;
         this.cells = new Array();
         this.cellVals = new Array();
-        var colPanel = new SplitPanel(1 /* Vertical */);
-        colPanel.addWidget(new Label(true, -1));
+        var panel = new SplitPanel(1 /* Vertical */);
+        var label = new Label(true, -1);
+        panel.addWidget(label);
+        this.labels.push(label);
         for (var i = 1; i <= height; i++) {
-            colPanel.addWidget(new Label(false, i));
+            label = new Label(false, i);
+            panel.addWidget(label);
+            this.labels.push(label);
         }
-        this.addWidget(colPanel);
+        this.addWidget(panel);
+        this.columns.push(panel);
         for (var i = 1; i <= width; i++) {
-            var panel = new SplitPanel(1 /* Vertical */);
+            panel = new SplitPanel(1 /* Vertical */);
             this.cells.push(new Array());
             this.cellVals.push(new Array());
-            panel.addWidget(new Label(true, i));
+            label = new Label(true, i);
+            panel.addWidget(label);
+            this.labels.push(label);
             for (var j = 1; j <= height; j++) {
-                this.cellVals[i - 1].push("" + i + " " + j);
+                this.cellVals[i - 1].push("");
                 var cell = new Cell(this, i, j);
                 panel.addWidget(cell);
                 this.cells[i - 1].push(cell);
             }
             this.addWidget(panel);
+            this.columns.push(panel);
         }
         this.selector = new SelectionManager(this);
         //addEventListener("dblclick", this.makeEditable);
@@ -393,7 +607,7 @@ var Spreadsheet = (function (_super) {
     return Spreadsheet;
 })(SplitPanel);
 function main() {
-    setup(15, 53);
+    setup(15, 27);
 }
 function setup(width, height) {
     var spreadsheet = new Spreadsheet(width, height);
