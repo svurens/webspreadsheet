@@ -373,6 +373,7 @@ var SelectionManager = (function () {
             }
             console.log(this.sheet.cellVals[i - 1].length);
         }
+        this.removeFocus();
         this.clearSelections();
         this.selectRow(rowNum - 1);
     };
@@ -404,6 +405,7 @@ var SelectionManager = (function () {
             this.sheet.cellVals[colNum - 1].push("");
             this.sheet.cells[colNum - 1].push(cell);
         }
+        this.removeFocus();
         this.clearSelections();
         this.selectCol(colNum - 1);
     };
