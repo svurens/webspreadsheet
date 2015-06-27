@@ -107,7 +107,6 @@ var Cell = (function (_super) {
         this.updateView();
         this._div.focus(this, this.onFocus);
         this._div.blur(this, this.onBlur);
-        //this.node.addEventListener("copy", function(){console.log("COPIED STUFF!")});
     }
     Cell.prototype.onFocus = function (e) {
         console.log(e);
@@ -409,6 +408,68 @@ var SelectionManager = (function () {
         this.clearSelections();
         this.selectCol(colNum - 1);
     };
+    SelectionManager.prototype.deleteRow = function (rowNum) {
+        for (var i = 0; i < this.sheet.labels.length; i++) {
+            if (this.sheet.labels[i].num == rowNum && !this.sheet.labels[i].isCol) {
+                this.sheet.labels[i].dispose();
+                this.sheet.labels.splice(i--, 1);
+            }
+            else if (this.sheet.labels[i].num > rowNum) {
+                this.sheet.labels[i].rowDeleted();
+            }
+        }
+        for (var i = 1; i < this.sheet.columns.length; i++) {
+            for (var j = rowNum; j < this.sheet.cells[i - 1].length; j++) {
+                this.sheet.cells[i - 1][j]._celly--;
+            }
+            this.sheet.cells[i - 1][rowNum - 1].dispose();
+            this.sheet.cells[i - 1].splice(rowNum - 1, 1);
+            this.sheet.cellVals[i - 1].splice(rowNum - 1, 1);
+        }
+        console.log(this.focusedCell);
+        this.removeFocus();
+        this.clearSelections();
+        if (this.sheet.cells[0].length < rowNum) {
+            this.selectRow(rowNum - 2);
+        }
+        else {
+            this.selectRow(rowNum - 1);
+        }
+    };
+    SelectionManager.prototype.deleteCol = function (colNum) {
+        for (var i = 0; i < this.sheet.labels.length; i++) {
+            if (this.sheet.labels[i].num == colNum && this.sheet.labels[i].isCol) {
+                this.sheet.labels[i].dispose();
+                this.sheet.labels.splice(i--, 1);
+            }
+            else if (this.sheet.labels[i].num > colNum) {
+                this.sheet.labels[i].colDeleted();
+            }
+        }
+        for (var i = colNum; i < this.sheet.cells.length; i++) {
+            for (var j = 0; j < this.sheet.cells[0].length; j++) {
+                this.sheet.cells[i][j]._cellx--;
+            }
+        }
+        console.log(this.sheet.cells);
+        while (this.sheet.cells[colNum - 1].length > 0) {
+            this.sheet.cells[colNum - 1][0].dispose();
+            this.sheet.cells[colNum - 1].splice(0, 1);
+            this.sheet.cellVals[colNum - 1].splice(0, 1);
+        }
+        console.log(this.sheet.cells);
+        this.sheet.cells.splice(colNum - 1, 1);
+        this.sheet.columns[colNum].dispose();
+        this.sheet.columns.splice(colNum, 1);
+        this.removeFocus();
+        this.clearSelections();
+        if (this.sheet.cells.length < colNum) {
+            this.selectCol(colNum - 2);
+        }
+        else {
+            this.selectCol(colNum - 1);
+        }
+    };
     SelectionManager.prototype.createMenu = function () {
         (function (manager) {
             var handler = {
@@ -428,6 +489,14 @@ var SelectionManager = (function () {
                     console.log("Add col after");
                     manager.insertCol(manager.focusedCell._cellx + 1);
                 },
+                delRow: function () {
+                    console.log("Delete row");
+                    manager.deleteRow(manager.focusedCell._celly);
+                },
+                delCol: function () {
+                    console.log("Delete col");
+                    manager.deleteCol(manager.focusedCell._cellx);
+                },
             };
             var rowBeforeItem = new MenuItem({
                 text: "Insert Row Before",
@@ -445,15 +514,27 @@ var SelectionManager = (function () {
                 text: "Insert Column After",
                 className: 'colAfter'
             });
+            var delRowItem = new MenuItem({
+                text: "Delete Row",
+                className: 'delRow'
+            });
+            var delColItem = new MenuItem({
+                text: "Delete Column",
+                className: 'delCol'
+            });
             connect(rowBeforeItem, MenuItem.triggered, handler, handler.rowBefore);
             connect(rowAfterItem, MenuItem.triggered, handler, handler.rowAfter);
             connect(colBeforeItem, MenuItem.triggered, handler, handler.colBefore);
             connect(colAfterItem, MenuItem.triggered, handler, handler.colAfter);
+            connect(delRowItem, MenuItem.triggered, handler, handler.delRow);
+            connect(delColItem, MenuItem.triggered, handler, handler.delCol);
             var rightClickMenu = new Menu([
                 rowBeforeItem,
                 rowAfterItem,
                 colBeforeItem,
-                colAfterItem
+                colAfterItem,
+                delRowItem,
+                delColItem
             ]);
             document.addEventListener('contextmenu', function (event) {
                 event.preventDefault();
