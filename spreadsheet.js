@@ -124,10 +124,10 @@ var Cell = (function (_super) {
         this._div.attr('contenteditable', 'true');
     };
     Cell.prototype.updateView = function () {
-        this._div.text(this._sheet.cellVals[this._cellx - 1][this._celly - 1]);
+        this._div.text(this._sheet.getCellVal(this._cellx - 1, this._celly - 1));
     };
     Cell.prototype.pushBack = function () {
-        this._sheet.cellVals[this._cellx - 1][this._celly - 1] = this._div.text();
+        this._sheet.setCellVal(this._cellx - 1, this._celly - 1, this._div.text());
         this._div.attr('contenteditable', 'false');
         this._sheet.selector.endEdits();
     };
@@ -258,7 +258,7 @@ var SelectionManager = (function () {
                                 manager.selectArea();
                             }
                             else {
-                                if (manager.maxX < sheet.cells.length) {
+                                if (manager.maxX < sheet.getWidth()) {
                                     manager.maxX++;
                                     manager.selectArea();
                                 }
@@ -275,7 +275,7 @@ var SelectionManager = (function () {
                                 manager.selectArea();
                             }
                             else {
-                                if (manager.maxY < sheet.cells[0].length) {
+                                if (manager.maxY < sheet.getHeight()) {
                                     manager.maxY++;
                                     manager.selectArea();
                                 }
@@ -306,7 +306,7 @@ var SelectionManager = (function () {
                 var str = "";
                 for (var i = manager.minY; i <= manager.maxY; i++) {
                     for (var j = manager.minX; j <= manager.maxX; j++) {
-                        str = str + manager.getCell(j - 1, i - 1)._div.text();
+                        str = str + manager.sheet.getCell(j - 1, i - 1)._div.text();
                         if (j < manager.maxX) {
                             str = str + '\t';
                         }
@@ -332,104 +332,101 @@ var SelectionManager = (function () {
                     for (var i = 0; i < lines.length; i++) {
                         var cells = lines[i].split("\t");
                         for (var j = 0; j < maxW; j++) {
-                            if (manager.minX + j <= sheet.cells.length && manager.minY + i <= sheet.cells[0].length) {
+                            if (manager.minX + j <= sheet.getWidth() && manager.minY + i <= sheet.getHeight()) {
                                 if (typeof cells[j] !== 'undefined') {
                                     manager.setCell(manager.minX + j - 1, manager.minY + i - 1, cells[j]);
                                 }
                                 else {
                                     manager.setCell(manager.minX + j - 1, manager.minY + i - 1, "");
                                 }
-                                manager.select(manager.getCell(manager.minX + j - 1, manager.minY + i - 1));
+                                manager.select(manager.sheet.getCell(manager.minX + j - 1, manager.minY + i - 1));
                             }
                         }
                     }
                     manager.maxX = manager.minX + maxW - 1;
                     manager.maxY = manager.minY + lines.length - 1;
                     manager.removeFocus();
-                    manager.focusCell(manager.getCell(manager.minX - 1, manager.minY - 1));
+                    manager.focusCell(manager.sheet.getCell(manager.minX - 1, manager.minY - 1));
                 }
             });
         })(this.sheet, this);
-        this.focusCell(this.getCell(0, 0));
+        this.focusCell(this.sheet.getCell(0, 0));
         this.createMenu();
     }
     SelectionManager.prototype.insertRow = function (rowNum) {
-        for (var i = 0; i < this.sheet.labels.length; i++) {
-            if (this.sheet.labels[i].num >= rowNum) {
-                this.sheet.labels[i].rowInserted();
+        for (var i = 0; i < this.sheet.getLabelCount(); i++) {
+            if (this.sheet.getLabel(i).num >= rowNum) {
+                this.sheet.getLabel(i).rowInserted();
             }
         }
-        var label = new Label(false, rowNum);
-        this.sheet.columns[0].insertWidget(rowNum, label);
-        this.sheet.labels.push(label);
-        for (var i = 1; i < this.sheet.columns.length; i++) {
-            this.sheet.cellVals[i - 1].splice(rowNum - 1, 0, "");
-            var cell = new Cell(this.sheet, i, rowNum);
-            this.sheet.cells[i - 1].splice(rowNum - 1, 0, cell);
-            this.sheet.columns[i].insertWidget(rowNum, cell);
-            for (var j = rowNum; j < this.sheet.cells[i - 1].length; j++) {
-                this.sheet.cells[i - 1][j]._celly++;
-            }
-            console.log(this.sheet.cellVals[i - 1].length);
-        }
+        this.sheet.insertRow(rowNum);
+        // for (var i = 1; i < this.sheet.columns.length; i++) {
+        //   this.sheet.cellVals[i - 1].splice(rowNum - 1, 0, "");
+        //   var cell = new Cell(this.sheet, i, rowNum);
+        //   this.sheet.cells[i - 1].splice(rowNum - 1, 0, cell);
+        //   this.sheet.columns[i].insertWidget(rowNum, cell);
+        //   for (var j = rowNum; j < this.sheet.cells[i - 1].length; j++) {
+        //     this.sheet.cells[i - 1][j]._celly++;
+        //   }
+        // }
         this.removeFocus();
         this.clearSelections();
         this.selectRow(rowNum - 1);
     };
     SelectionManager.prototype.insertCol = function (colNum) {
-        for (var i = 0; i < this.sheet.labels.length; i++) {
-            if (this.sheet.labels[i].num >= colNum) {
-                this.sheet.labels[i].colInserted();
+        for (var i = 0; i < this.sheet.getLabelCount(); i++) {
+            if (this.sheet.getLabel(i).num >= colNum) {
+                this.sheet.getLabel(i).colInserted();
             }
         }
-        var panel = new SplitPanel(1 /* Vertical */);
-        this.sheet.insertWidget(colNum, panel);
-        var label = new Label(true, colNum);
-        panel.addWidget(label);
-        this.sheet.labels.push(label);
-        this.sheet.columns.splice(colNum, 0, panel);
-        console.log(this.sheet.cells);
-        for (var i = colNum - 1; i < this.sheet.cells.length; i++) {
-            for (var j = 0; j < this.sheet.cells[0].length; j++) {
-                this.sheet.cells[i][j]._cellx++;
-            }
-        }
-        var len = this.sheet.cells[0].length;
-        this.sheet.cells.splice(colNum - 1, 0, new Array());
-        this.sheet.cellVals.splice(colNum - 1, 0, new Array());
-        for (var i = 0; i < len; i++) {
-            var cell = new Cell(this.sheet, colNum, i + 1);
-            cell.width = this.focusedCell.width;
-            panel.addWidget(cell);
-            this.sheet.cellVals[colNum - 1].push("");
-            this.sheet.cells[colNum - 1].push(cell);
-        }
+        // var panel = new SplitPanel(Orientation.Vertical);
+        // this.sheet.insertWidget(colNum, panel);
+        // var label = new Label(true, colNum);
+        // panel.addWidget(label);
+        // this.sheet.labels.push(label);
+        // this.sheet.columns.splice(colNum, 0, panel);
+        // for (var i = colNum - 1; i < this.sheet.cells.length; i++) {
+        //   for (var j = 0; j < this.sheet.cells[0].length; j++) {
+        //     this.sheet.cells[i][j]._cellx++;
+        //   }
+        // }
+        // var len = this.sheet.cells[0].length;
+        // this.sheet.cells.splice(colNum - 1, 0, new Array());
+        // this.sheet.cellVals.splice(colNum - 1, 0, new Array());
+        // for (var i = 0; i < len; i++) {
+        //   var cell = new Cell(this.sheet, colNum, i + 1);
+        //   cell.width = this.focusedCell.width;
+        //   panel.addWidget(cell);
+        //   this.sheet.cellVals[colNum - 1].push("");
+        //   this.sheet.cells[colNum - 1].push(cell);
+        // }
+        this.sheet.insertCol(colNum);
         this.removeFocus();
         this.clearSelections();
         this.selectCol(colNum - 1);
     };
     SelectionManager.prototype.deleteRow = function (rowNum) {
-        for (var i = 0; i < this.sheet.labels.length; i++) {
-            if (this.sheet.labels[i].num == rowNum && !this.sheet.labels[i].isCol) {
-                this.sheet.labels[i].dispose();
-                this.sheet.labels.splice(i--, 1);
+        for (var i = 0; i < this.sheet.getLabelCount(); i++) {
+            if (this.sheet.getLabel(i).num == rowNum && !this.sheet.getLabel(i).isCol) {
+                this.sheet.delLabel(i--);
             }
-            else if (this.sheet.labels[i].num > rowNum) {
-                this.sheet.labels[i].rowDeleted();
+            else if (this.sheet.getLabel(i).num > rowNum) {
+                this.sheet.getLabel(i).rowDeleted();
             }
         }
-        for (var i = 1; i < this.sheet.columns.length; i++) {
-            for (var j = rowNum; j < this.sheet.cells[i - 1].length; j++) {
-                this.sheet.cells[i - 1][j]._celly--;
-            }
-            this.sheet.cells[i - 1][rowNum - 1].dispose();
-            this.sheet.cells[i - 1].splice(rowNum - 1, 1);
-            this.sheet.cellVals[i - 1].splice(rowNum - 1, 1);
-        }
+        //  for (var i = 1; i < this.sheet.columns.length; i++) {
+        // for (var j = rowNum; j < this.sheet.cells[i - 1].length; j++) {
+        //      this.sheet.cells[i - 1][j]._celly--;
+        //    }
+        //    this.sheet.cells[i - 1][rowNum - 1].dispose();
+        //    this.sheet.cells[i - 1].splice(rowNum - 1, 1);
+        //    this.sheet.cellVals[i - 1].splice(rowNum - 1, 1);
+        //  }
+        this.sheet.deleteRow(rowNum);
         console.log(this.focusedCell);
         this.removeFocus();
         this.clearSelections();
-        if (this.sheet.cells[0].length < rowNum) {
+        if (this.sheet.getHeight() < rowNum) {
             this.selectRow(rowNum - 2);
         }
         else {
@@ -437,33 +434,31 @@ var SelectionManager = (function () {
         }
     };
     SelectionManager.prototype.deleteCol = function (colNum) {
-        for (var i = 0; i < this.sheet.labels.length; i++) {
-            if (this.sheet.labels[i].num == colNum && this.sheet.labels[i].isCol) {
-                this.sheet.labels[i].dispose();
-                this.sheet.labels.splice(i--, 1);
+        for (var i = 0; i < this.sheet.getLabelCount(); i++) {
+            if (this.sheet.getLabel(i).num == colNum && this.sheet.getLabel(i).isCol) {
+                this.sheet.delLabel(i--);
             }
-            else if (this.sheet.labels[i].num > colNum) {
-                this.sheet.labels[i].colDeleted();
-            }
-        }
-        for (var i = colNum; i < this.sheet.cells.length; i++) {
-            for (var j = 0; j < this.sheet.cells[0].length; j++) {
-                this.sheet.cells[i][j]._cellx--;
+            else if (this.sheet.getLabel(i).num > colNum) {
+                this.sheet.getLabel(i).colDeleted();
             }
         }
-        console.log(this.sheet.cells);
-        while (this.sheet.cells[colNum - 1].length > 0) {
-            this.sheet.cells[colNum - 1][0].dispose();
-            this.sheet.cells[colNum - 1].splice(0, 1);
-            this.sheet.cellVals[colNum - 1].splice(0, 1);
-        }
-        console.log(this.sheet.cells);
-        this.sheet.cells.splice(colNum - 1, 1);
-        this.sheet.columns[colNum].dispose();
-        this.sheet.columns.splice(colNum, 1);
+        // for (var i = colNum; i < this.sheet.cells.length; i++) {
+        //   for (var j = 0; j < this.sheet.cells[0].length; j++) {
+        //     this.sheet.cells[i][j]._cellx--;
+        //   }
+        // }
+        // while (this.sheet.cells[colNum - 1].length > 0) {
+        //   this.sheet.cells[colNum - 1][0].dispose();
+        //   this.sheet.cells[colNum - 1].splice(0, 1);
+        //   this.sheet.cellVals[colNum - 1].splice(0, 1);
+        // }
+        // this.sheet.cells.splice(colNum - 1, 1);
+        // this.sheet.columns[colNum].dispose();
+        // this.sheet.columns.splice(colNum, 1);
+        this.sheet.deleteCol(colNum);
         this.removeFocus();
         this.clearSelections();
-        if (this.sheet.cells.length < colNum) {
+        if (this.sheet.getWidth() < colNum) {
             this.selectCol(colNum - 2);
         }
         else {
@@ -572,55 +567,52 @@ var SelectionManager = (function () {
         this.clearSelections();
         for (var i = this.minX; i <= this.maxX; i++) {
             for (var j = this.minY; j <= this.maxY; j++) {
-                this.select(this.getCell(i - 1, j - 1));
+                this.select(this.sheet.getCell(i - 1, j - 1));
             }
         }
     };
     SelectionManager.prototype.selectRow = function (rowNum) {
-        for (var i = 0; i < this.sheet.cells.length; i++) {
-            this.select(this.sheet.cells[i][rowNum]);
+        for (var i = 0; i < this.sheet.getWidth(); i++) {
+            this.select(this.sheet.getCell(i, rowNum));
         }
-        this.sheet.cells[0][rowNum].focus();
-        this.focusedCell = this.sheet.cells[0][rowNum];
+        this.sheet.getCell(0, rowNum).focus();
+        this.focusedCell = this.sheet.getCell(0, rowNum);
         this.minX = 1;
-        this.maxX = this.sheet.cells.length;
+        this.maxX = this.sheet.getWidth();
         this.minY = rowNum;
         this.maxY = rowNum;
     };
     SelectionManager.prototype.selectCol = function (colNum) {
         if (colNum >= 0) {
-            for (var i = 0; i < this.sheet.cells[0].length; i++) {
-                this.select(this.sheet.cells[colNum][i]);
+            for (var i = 0; i < this.sheet.getHeight(); i++) {
+                this.select(this.sheet.getCell(colNum, i));
             }
-            this.sheet.cells[colNum][0].focus();
-            this.focusedCell = this.sheet.cells[colNum][0];
+            this.sheet.getCell(colNum, 0).focus();
+            this.focusedCell = this.sheet.getCell(colNum, 0);
             this.minY = 1;
-            this.maxY = this.sheet.cells[0].length;
+            this.maxY = this.sheet.getHeight();
             this.minX = colNum;
             this.maxX = colNum;
         }
     };
     SelectionManager.prototype.clearCell = function (cell) {
-        cell._sheet.cellVals[cell._cellx - 1][cell._celly - 1] = "";
+        cell._sheet.setCellVal(cell._cellx - 1, cell._celly - 1, "");
         cell.updateView();
     };
     SelectionManager.prototype.move = function (skipCheck, xAmount, yAmount) {
-        if (typeof this.focusedCell !== 'undefined' && this.focusedCell._cellx + xAmount > 0 && this.focusedCell._cellx + xAmount <= this.sheet.cells.length && this.focusedCell._celly + yAmount > 0 && this.focusedCell._celly + yAmount <= this.sheet.cells[0].length) {
+        if (typeof this.focusedCell !== 'undefined' && this.focusedCell._cellx + xAmount > 0 && this.focusedCell._cellx + xAmount <= this.sheet.getWidth() && this.focusedCell._celly + yAmount > 0 && this.focusedCell._celly + yAmount <= this.sheet.getHeight()) {
             if (!this.editing || skipCheck) {
                 this.clearSelections();
                 this.focusedCell.pushBack();
                 this.focusedCell._div.removeClass('focused');
-                var cell = this.getCell(this.focusedCell._cellx - 1 + xAmount, this.focusedCell._celly - 1 + yAmount);
+                var cell = this.sheet.getCell(this.focusedCell._cellx - 1 + xAmount, this.focusedCell._celly - 1 + yAmount);
                 this.focusCell(cell);
             }
         }
     };
-    SelectionManager.prototype.getCell = function (x, y) {
-        return this.sheet.cells[x][y];
-    };
     SelectionManager.prototype.setCell = function (x, y, newVal) {
-        this.sheet.cellVals[x][y] = newVal;
-        this.getCell(x, y).updateView();
+        this.sheet.setCellVal(x, y, newVal);
+        this.sheet.getCell(x, y).updateView();
     };
     SelectionManager.prototype.select = function (cell) {
         this.selectedCells.push(cell);
@@ -687,6 +679,99 @@ var Spreadsheet = (function (_super) {
         //addEventListener("mouseup", this.mouseUp);
         //addEventListener("keypress", this.makeEditable);
     }
+    Spreadsheet.prototype.getColumn = function (colNum) {
+        return this.columns[colNum];
+    };
+    Spreadsheet.prototype.getColumnLength = function () {
+        return this.columns.length;
+    };
+    Spreadsheet.prototype.getLabel = function (idx) {
+        return this.labels[idx];
+    };
+    Spreadsheet.prototype.getLabelCount = function () {
+        return this.labels.length;
+    };
+    Spreadsheet.prototype.delLabel = function (idx) {
+        this.labels[idx].dispose();
+        this.labels.splice(idx, 1);
+    };
+    Spreadsheet.prototype.getCell = function (x, y) {
+        return this.cells[x][y];
+    };
+    Spreadsheet.prototype.getWidth = function () {
+        return this.cells.length;
+    };
+    Spreadsheet.prototype.getHeight = function () {
+        return this.cells[0].length;
+    };
+    Spreadsheet.prototype.getCellVal = function (x, y) {
+        return this.cellVals[x][y];
+    };
+    Spreadsheet.prototype.setCellVal = function (x, y, newVal) {
+        this.cellVals[x][y] = newVal;
+    };
+    Spreadsheet.prototype.insertRow = function (rowNum) {
+        var label = new Label(false, rowNum);
+        this.columns[0].insertWidget(rowNum, label);
+        this.labels.push(label);
+        for (var i = 1; i < this.columns.length; i++) {
+            this.cellVals[i - 1].splice(rowNum - 1, 0, "");
+            var cell = new Cell(this, i, rowNum);
+            this.cells[i - 1].splice(rowNum - 1, 0, cell);
+            this.columns[i].insertWidget(rowNum, cell);
+            for (var j = rowNum; j < this.cells[i - 1].length; j++) {
+                this.cells[i - 1][j]._celly++;
+            }
+        }
+    };
+    Spreadsheet.prototype.insertCol = function (colNum) {
+        var panel = new SplitPanel(1 /* Vertical */);
+        this.insertWidget(colNum, panel);
+        var label = new Label(true, colNum);
+        panel.addWidget(label);
+        this.labels.push(label);
+        this.columns.splice(colNum, 0, panel);
+        for (var i = colNum - 1; i < this.cells.length; i++) {
+            for (var j = 0; j < this.cells[0].length; j++) {
+                this.cells[i][j]._cellx++;
+            }
+        }
+        var len = this.cells[0].length;
+        this.cells.splice(colNum - 1, 0, new Array());
+        this.cellVals.splice(colNum - 1, 0, new Array());
+        for (var i = 0; i < len; i++) {
+            var cell = new Cell(this, colNum, i + 1);
+            panel.addWidget(cell);
+            this.cellVals[colNum - 1].push("");
+            this.cells[colNum - 1].push(cell);
+        }
+    };
+    Spreadsheet.prototype.deleteRow = function (rowNum) {
+        for (var i = 1; i < this.columns.length; i++) {
+            for (var j = rowNum; j < this.cells[i - 1].length; j++) {
+                this.cells[i - 1][j]._celly--;
+            }
+            this.cells[i - 1][rowNum - 1].dispose();
+            this.cells[i - 1].splice(rowNum - 1, 1);
+            this.cellVals[i - 1].splice(rowNum - 1, 1);
+        }
+    };
+    Spreadsheet.prototype.deleteCol = function (colNum) {
+        for (var i = colNum; i < this.cells.length; i++) {
+            for (var j = 0; j < this.cells[0].length; j++) {
+                this.cells[i][j]._cellx--;
+            }
+        }
+        while (this.cells[colNum - 1].length > 0) {
+            console.log(this.cells[colNum - 1].length);
+            this.cells[colNum - 1][0].dispose();
+            this.cells[colNum - 1].splice(0, 1);
+            this.cellVals[colNum - 1].splice(0, 1);
+        }
+        this.cells.splice(colNum - 1, 1);
+        this.columns[colNum].dispose();
+        this.columns.splice(colNum, 1);
+    };
     return Spreadsheet;
 })(SplitPanel);
 function main() {
